@@ -56,22 +56,18 @@ class ApiThread(QThread):
 
     def create_order(self, order_data):
         try:
-            # Сначала создаем заказ
             response = requests.post(
                 f"{self.base_url}/orders/create",
                 json=order_data
             )
 
             if response.status_code == 200:
-                # Если заказ успешно создан, уменьшаем количество товаров на складе
                 order_id = response.json().get('order_id')
                 if order_id:
-                    # Для каждого товара в заказе отправляем запрос на уменьшение количества
                     for item in order_data.get('items', []):
                         product_id = item.get('product_id')
                         quantity = item.get('quantity', 1)
 
-                        # Отправляем запрос на уменьшение количества товара
                         reduce_data = {
                             "amount": quantity,
                             "reason": f"Order #{order_id}"
@@ -83,7 +79,6 @@ class ApiThread(QThread):
 
                         if reduce_response.status_code != 200:
                             print(f"Failed to reduce stock for product {product_id}: {reduce_response.text}")
-                            # Можно добавить дополнительную обработку ошибок здесь
 
                     self.order_created.emit(True, "Заказ успешно создан")
                 else:
@@ -218,7 +213,6 @@ class PaymentDialog(QDialog):
         self.show_status("Платеж успешно обработан", True)
 
         # Получаем реальный ID пользователя из родительского окна
-        # Предполагается, что parent имеет атрибут user_id или current_user_id
         user_id = getattr(self.parent, 'user_id', None) or getattr(self.parent, 'current_user_id', None)
 
         if user_id is None:
@@ -782,6 +776,7 @@ class JewelryStoreApp(QMainWindow):
         self.api_thread.products_loaded.connect(self.display_products)
         self.api_thread.image_loaded.connect(self.update_product_image)
         self.api_thread.products_loaded.connect(self.update_category_filters)  # Добавляем обновление фильтров
+        self.api_thread.order_created.connect(self.handle_order_created)
 
         # Central widget
         central_widget = QWidget()
@@ -1070,6 +1065,8 @@ class JewelryStoreApp(QMainWindow):
             # Очищаем корзину после успешного создания заказа
             self.cart = []
             self.update_cart_page()
+            # Обновляем список заказов в профиле
+            self.load_profile_data()
             QMessageBox.information(self, "Успех", "Ваш заказ успешно создан и оплачен!")
         else:
             QMessageBox.warning(self, "Ошибка", message)
@@ -1605,7 +1602,6 @@ class JewelryStoreApp(QMainWindow):
             user_response = requests.get(f"{self.api_thread.base_url}/users/{self.user_id}")
             if user_response.status_code == 200:
                 user_data = user_response.json()
-
                 self.username_label.setText(f"Имя пользователя: {user_data.get('username', 'Неизвестно')}")
                 self.role_label.setText(f"Роль: {user_data.get('role', 'Неизвестно')}")
 
@@ -1631,14 +1627,21 @@ class JewelryStoreApp(QMainWindow):
                 orders = orders_response.json()
                 self.display_orders(orders)
             else:
-                self.no_orders_label.setText("Ошибка загрузки заказов")
+                # Создаем новый no_orders_label при ошибке
+                self.no_orders_label = QLabel("Ошибка загрузки заказов")
+                self.no_orders_label.setFont(QFont('Montserrat', 14))
                 self.no_orders_label.setStyleSheet("color: #ff5555;")
+                self.no_orders_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.orders_container_layout.addWidget(self.no_orders_label)
 
         except requests.exceptions.RequestException as e:
-            self.username_label.setText("Нет соединения с сервером")
-            self.no_orders_label.setText("Нет соединения с сервером")
-            self.no_orders_label.setStyleSheet("color: #ff5555;")
             print(f"Ошибка загрузки данных профиля: {str(e)}")
+            # Создаем новый no_orders_label при ошибке соединения
+            self.no_orders_label = QLabel("Нет соединения с сервером")
+            self.no_orders_label.setFont(QFont('Montserrat', 14))
+            self.no_orders_label.setStyleSheet("color: #ff5555;")
+            self.no_orders_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.orders_container_layout.addWidget(self.no_orders_label)
 
     def display_orders(self, orders):
         # Очищаем контейнер заказов
@@ -1648,6 +1651,7 @@ class JewelryStoreApp(QMainWindow):
                 item.widget().deleteLater()
 
         if not orders:
+            # Создаем новый no_orders_label, если заказов нет
             self.no_orders_label = QLabel("У вас пока нет заказов")
             self.no_orders_label.setFont(QFont('Montserrat', 14))
             self.no_orders_label.setStyleSheet("color: white;")
@@ -1655,9 +1659,9 @@ class JewelryStoreApp(QMainWindow):
             self.orders_container_layout.addWidget(self.no_orders_label)
             return
 
-        # Скрываем placeholder, если есть заказы
-        if hasattr(self, 'no_orders_label') and self.no_orders_label:
-            self.no_orders_label.hide()
+        # Если есть заказы, no_orders_label не нужен
+        if hasattr(self, 'no_orders_label'):
+            del self.no_orders_label
 
         for order in orders:
             order_frame = QFrame()
